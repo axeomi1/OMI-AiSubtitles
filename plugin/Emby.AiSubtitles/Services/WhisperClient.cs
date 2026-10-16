@@ -137,6 +137,13 @@ namespace Emby.AiSubtitles.Services
                                 continue;
                             }
 
+                            if ((int)response.StatusCode == 401 || (int)response.StatusCode == 403)
+                            {
+                                throw new InvalidOperationException(string.Format(
+                                    "Whisper API Key 无效或未填写 (HTTP {0}, URL: {1})。若使用 Groq 请填写 gsk_ 开头的 Key；若使用本地容器请将接口地址改为 http://NAS_IP:8000/v1。服务端返回: {2}",
+                                    (int)response.StatusCode, url, Truncate(body)));
+                            }
+
                             if (!response.IsSuccessStatusCode)
                             {
                                 throw new HttpRequestException(string.Format(
@@ -155,6 +162,10 @@ namespace Emby.AiSubtitles.Services
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (InvalidOperationException)
                 {
                     throw;
                 }
