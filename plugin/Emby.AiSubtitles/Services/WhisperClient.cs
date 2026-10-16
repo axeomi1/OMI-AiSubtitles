@@ -101,7 +101,13 @@ namespace Emby.AiSubtitles.Services
             Action<string> statusCallback,
             CancellationToken ct)
         {
-            var url = config.WhisperApiUrl.TrimEnd('/') + "/audio/transcriptions";
+            var rawUrl = (config.WhisperApiUrl ?? string.Empty).Trim();
+            if (!rawUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !rawUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                rawUrl = "http://" + rawUrl;
+            }
+
+            var url = rawUrl.TrimEnd('/') + "/audio/transcriptions";
             var audioBytes = File.ReadAllBytes(audioPath);
             var sizeMb = audioBytes.Length / (1024.0 * 1024.0);
             var fileName = Path.GetFileName(audioPath);

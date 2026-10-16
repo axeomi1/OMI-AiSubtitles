@@ -130,7 +130,13 @@ namespace Emby.AiSubtitles.Services
                 }
             };
 
-            var url = config.LlmApiUrl.TrimEnd('/') + "/chat/completions";
+            var rawUrl = (config.LlmApiUrl ?? string.Empty).Trim();
+            if (!rawUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !rawUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                rawUrl = "http://" + rawUrl;
+            }
+
+            var url = rawUrl.TrimEnd('/') + "/chat/completions";
             using (var request = new HttpRequestMessage(HttpMethod.Post, url))
             {
                 request.Headers.ExpectContinue = false;
