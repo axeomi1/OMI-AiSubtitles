@@ -82,6 +82,36 @@ namespace Emby.AiSubtitles.Services
             }
         }
 
+        /// <summary>
+        /// 时间轴校正：单条最长 7 秒；不与下一句重叠（下一句开始前 50ms 结束）；过短的条目延长到至少 0.8 秒（不越过下一句）。
+        /// 解决「人物已开始说下一句，字幕还停在上一句」的问题。
+        /// </summary>
+        public static void NormalizeTiming(List<SubtitleCue> cues, double maxSeconds = 7.0, double minSeconds = 0.8)
+        {
+            if (cues == null || cues.Count == 0)
+            {
+                return;
+            }
+
+            cues.Sort((a, b) => a.Start.CompareTo(b.Start));
+            for (int i = 0; i < cues.Count; i++)
+            {
+                var c = cues[i];
+                double nextStart = i + 1 < cues.Count ? cues[i + 1].Start : double.MaxValue;
+                double end = Math.Min(c.End, c.Start + maxSeconds);
+                if (end - c.Start < minSeconds)
+                {
+                    end = c.Start + minSeconds;
+                }
+                end = Math.Min(end, nextStart - 0.05);
+                if (end <= c.Start)
+                {
+                    end = Math.Min(c.Start + 0.3, Math.Max(c.Start + 0.05, nextStart));
+                }
+                c.End = end;
+            }
+        }
+
         public static bool IsFillerOrMoan(string text)
         {
             if (string.IsNullOrWhiteSpace(text))

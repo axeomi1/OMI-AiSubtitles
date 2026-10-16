@@ -71,6 +71,41 @@ def check_auth(authorization: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="invalid api key")
 
 
+WORD_TIMESTAMPS = os.getenv("WORD_TIMESTAMPS", "true").lower() == "true"
+MAX_CUE_SECONDS = float(os.getenv("MAX_CUE_SECONDS", "6"))     # 单条字幕最长显示时间
+MAX_CUE_CHARS = int(os.getenv("MAX_CUE_CHARS", "28"))          # 单条字幕最多字符
+GAP_SPLIT_SECONDS = float(os.getenv("GAP_SPLIT_SECONDS", "0.6"))  # 词间停顿超过此值即断句
+_PUNCT_END = tuple("。！？!?.…♪")
+
+
+def _split_by_words(seg):
+    """利用词级时间戳把 Whisper 的长段落切成与语音精确对齐的短句。"""
+    words = [w for w in (seg.words or []) if w.word and w.word.strip()]
+    if not words:
+        return [(seg.start, seg.end, seg.text.strip())]
+
+    cues, buf = [], []
+
+    def flush():
+        if buf:
+            text = "".join(w.word for w in buf).strip()
+            if text:
+                cues.append((buf[0].start, buf[-1].end, text))
+            buf.clear()
+
+    for w in words:
+        if buf:
+            gap = w.start - buf[-1].end
+            dur = w.end - buf[0].start
+            length = len("".join(x.word for x in buf).strip())
+            if (gap >= GAP_SPLIT_SECONDS or dur > MAX_CUE_SECONDS or length >= MAX_CUE_CHARS
+                    or buf[-1].word.strip().endswith(_PUNCT_END)):
+                flush()
+        buf.append(w)
+    flush()
+    return cues
+
+
 def transcribe_file(path: str, language: Optional[str], prompt: Optional[str]):
     model = get_model()
     started = time.time()
@@ -81,20 +116,22 @@ def transcribe_file(path: str, language: Optional[str], prompt: Optional[str]):
         beam_size=BEAM_SIZE,
         best_of=1,
         temperature=0.0,
+        word_timestamps=WORD_TIMESTAMPS,   # 词级时间戳：字幕起止精确到每个词
         vad_filter=True,
         vad_parameters={
-            "min_silence_duration_ms": 400,
-            "speech_pad_ms": 200,
+            "min_silence_duration_ms": 300,
+            "speech_pad_ms": 100,
         },
         condition_on_previous_text=False,  # 降低长视频或音乐段“复读”幻觉
     )
     result = []
-    for i, seg in enumerate(segments):
-        text = seg.text.strip()
-        if not text:
+    for seg in segments:
+        if not seg.text.strip():
             continue
-        result.append({"id": i, "start": round(seg.start, 3), "end": round(seg.end, 3), "text": text})
-        if i % 30 == 0:
+        parts = _split_by_words(seg) if WORD_TIMESTAMPS else [(seg.start, seg.end, seg.text.strip())]
+        for start, end, text in parts:
+            result.append({"id": len(result), "start": round(start, 3), "end": round(end, 3), "text": text})
+        if len(result) % 30 == 0:
             log.info("进度 %.0f / %.0f 秒", seg.end, info.duration)
     log.info(
         "分片识别完成：%d 段，语言 %s (%.2f)，音频 %.0f 秒，耗时 %.1f 秒",

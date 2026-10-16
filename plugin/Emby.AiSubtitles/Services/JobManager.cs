@@ -279,6 +279,10 @@ namespace Emby.AiSubtitles.Services
                     cues = rawCues;
                 }
 
+                // 时间轴校正：防止字幕拖到下一句
+                try { SubtitleFilter.NormalizeTiming(cues); }
+                catch (Exception ex) { _logger.Warn("AI 字幕: 时间轴校正异常: {0}", ex.Message); }
+
                 job.SegmentCount = cues.Count;
                 job.DetectedLanguage = transcription.language;
                 _logger.Info("AI 字幕: 识别完成，原始 {0} 条，过滤后保留 {1} 条核心台词，检测语言 {2}",
