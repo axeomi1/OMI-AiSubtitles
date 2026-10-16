@@ -89,10 +89,10 @@ namespace Emby.AiSubtitles.Api
                     percent = 10;
                     break;
                 case JobState.Transcribing:
-                    percent = 35;
+                    percent = 15 + (int)Math.Round(job.Progress * 35);
                     break;
                 case JobState.Translating:
-                    percent = 40 + (int)Math.Round(job.Progress * 55);
+                    percent = 50 + (int)Math.Round(job.Progress * 48);
                     break;
                 case JobState.Completed:
                     percent = 100;

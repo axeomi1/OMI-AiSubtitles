@@ -24,7 +24,66 @@ namespace Emby.AiSubtitles.Services
             _json = json;
         }
 
-        public async Task<TranscriptionResponse> TranscribeAsync(string audioPath, PluginConfiguration config, CancellationToken ct)
+        /// <summary>
+        /// 按顺序对所有音频分片调用语音识别，并将每片的时间轴加上精确偏移后合并。
+        /// 每片只有 ~1.2MB，彻底解决 Groq / OpenAI 免费层或反向代理对 15MB+ 大文件直接 Connection reset by peer 的问题。
+        /// </summary>
+        public async Task<TranscriptionResponse> TranscribeChunksAsync(
+            IList<AudioChunk> chunks,
+            PluginConfiguration config,
+            IProgress<double> progress,
+            CancellationToken ct)
+        {
+            var mergedSegments = new List<TranscriptionSegment>();
+            string detectedLanguage = null;
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var chunk = chunks[i];
+                var offset = chunk.StartOffsetSeconds;
+
+                var resp = await TranscribeSingleAsync(chunk.Path, i + 1, chunks.Count, detectedLanguage, config, ct).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(detectedLanguage) && !string.IsNullOrWhiteSpace(resp.language))
+                {
+                    detectedLanguage = resp.language;
+                }
+
+                if (resp.segments != null)
+                {
+                    foreach (var seg in resp.segments)
+                    {
+                        if (string.IsNullOrWhiteSpace(seg.text))
+                        {
+                            continue;
+                        }
+
+                        mergedSegments.Add(new TranscriptionSegment
+                        {
+                            start = seg.start + offset,
+                            end = seg.end + offset,
+                            text = seg.text.Trim()
+                        });
+                    }
+                }
+
+                progress?.Report((i + 1) / (double)chunks.Count);
+            }
+
+            return new TranscriptionResponse
+            {
+                language = detectedLanguage ?? config.SourceLanguage ?? "unknown",
+                segments = mergedSegments
+            };
+        }
+
+        public async Task<TranscriptionResponse> TranscribeSingleAsync(
+            string audioPath,
+            int chunkIndex,
+            int totalChunks,
+            string lockedLanguage,
+            PluginConfiguration config,
+            CancellationToken ct)
         {
             var url = config.WhisperApiUrl.TrimEnd('/') + "/audio/transcriptions";
             var audioBytes = File.ReadAllBytes(audioPath);
@@ -32,9 +91,12 @@ namespace Emby.AiSubtitles.Services
             var fileName = Path.GetFileName(audioPath);
             var mime = audioPath.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) ? "audio/ogg" : "audio/mpeg";
             var modelName = string.IsNullOrWhiteSpace(config.WhisperModel) ? "whisper-1" : config.WhisperModel.Trim();
+            var lang = !string.IsNullOrWhiteSpace(config.SourceLanguage)
+                ? config.SourceLanguage.Trim()
+                : NormalizeIsoLanguage(lockedLanguage);
 
             Exception lastError = null;
-            for (var attempt = 1; attempt <= 3; attempt++)
+            for (var attempt = 1; attempt <= 4; attempt++)
             {
                 ct.ThrowIfCancellationRequested();
                 try
@@ -45,8 +107,6 @@ namespace Emby.AiSubtitles.Services
                     {
                         timeout.CancelAfter(TimeSpan.FromMinutes(Math.Max(5, config.RequestTimeoutMinutes)));
 
-                        // 禁用 Expect: 100-continue 并避免复用已半关闭的空闲连接，防止上传大音频时出现
-                        // "Error while copying content to a stream"
                         request.Headers.ExpectContinue = false;
                         request.Headers.ConnectionClose = true;
 
@@ -56,9 +116,9 @@ namespace Emby.AiSubtitles.Services
                         content.Add(new StringContent(modelName), "model");
                         content.Add(new StringContent("verbose_json"), "response_format");
                         content.Add(new StringContent("segment"), "timestamp_granularities[]");
-                        if (!string.IsNullOrWhiteSpace(config.SourceLanguage))
+                        if (!string.IsNullOrWhiteSpace(lang))
                         {
-                            content.Add(new StringContent(config.SourceLanguage.Trim()), "language");
+                            content.Add(new StringContent(lang), "language");
                         }
 
                         request.Content = content;
@@ -70,11 +130,18 @@ namespace Emby.AiSubtitles.Services
                         using (var response = await Http.SendAsync(request, HttpCompletionOption.ResponseContentRead, timeout.Token).ConfigureAwait(false))
                         {
                             var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            if ((int)response.StatusCode == 429 && attempt < 4)
+                            {
+                                // Groq 触发速率限制时等待后自动重试
+                                await Task.Delay(TimeSpan.FromSeconds(8 * attempt), ct).ConfigureAwait(false);
+                                continue;
+                            }
+
                             if (!response.IsSuccessStatusCode)
                             {
                                 throw new HttpRequestException(string.Format(
-                                    "语音识别接口返回 HTTP {0} (音频 {1:F1}MB): {2}",
-                                    (int)response.StatusCode, sizeMb, Truncate(body)));
+                                    "语音识别接口返回 HTTP {0} (分片 {1}/{2}, {3:F1}MB): {4}",
+                                    (int)response.StatusCode, chunkIndex, totalChunks, sizeMb, Truncate(body)));
                             }
 
                             var result = _json.DeserializeFromString<TranscriptionResponse>(body);
@@ -83,9 +150,6 @@ namespace Emby.AiSubtitles.Services
                                 throw new InvalidOperationException("语音识别接口没有返回 segments，请确认它支持 response_format=verbose_json。");
                             }
 
-                            result.segments = result.segments
-                                .Where(s => !string.IsNullOrWhiteSpace(s.text))
-                                .ToList();
                             return result;
                         }
                     }
@@ -97,7 +161,7 @@ namespace Emby.AiSubtitles.Services
                 catch (Exception ex)
                 {
                     lastError = ex;
-                    if (attempt < 3)
+                    if (attempt < 4)
                     {
                         await Task.Delay(TimeSpan.FromSeconds(3 * attempt), ct).ConfigureAwait(false);
                     }
@@ -105,9 +169,37 @@ namespace Emby.AiSubtitles.Services
             }
 
             throw new InvalidOperationException(
-                string.Format("上传音频至语音识别接口失败 (音频 {0:F1}MB, URL: {1}): {2}",
-                    sizeMb, url, FlattenException(lastError)),
+                string.Format("上传音频分片 {0}/{1} 至语音识别接口失败 ({2:F1}MB, URL: {3}): {4}",
+                    chunkIndex, totalChunks, sizeMb, url, FlattenException(lastError)),
                 lastError);
+        }
+
+        /// <summary>Whisper verbose_json 返回的 language 可能是全称（如 japanese / english），转成 ISO-639-1 两位代码供后续分片固定语言。</summary>
+        private static string NormalizeIsoLanguage(string lang)
+        {
+            if (string.IsNullOrWhiteSpace(lang))
+            {
+                return null;
+            }
+
+            lang = lang.Trim().ToLowerInvariant();
+            if (lang.Length == 2)
+            {
+                return lang;
+            }
+
+            switch (lang)
+            {
+                case "japanese": return "ja";
+                case "english": return "en";
+                case "chinese": return "zh";
+                case "korean": return "ko";
+                case "french": return "fr";
+                case "german": return "de";
+                case "spanish": return "es";
+                case "russian": return "ru";
+                default: return null;
+            }
         }
 
         public static string FlattenException(Exception ex)

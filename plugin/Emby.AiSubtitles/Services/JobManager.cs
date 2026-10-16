@@ -227,7 +227,6 @@ namespace Emby.AiSubtitles.Services
         private async Task RunAsync(SubtitleJob job)
         {
             var req = job.Request;
-            string audioPath = null;
             await _slots.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -238,7 +237,7 @@ namespace Emby.AiSubtitles.Services
                 var ct = CancellationToken.None;
                 _logger.Info("AI 字幕: 开始生成 {0} [{1}, {2}]", req.MediaPath, req.Language, format);
 
-                // 1. 抽取音频
+                // 1. 抽取音频并按 10 分钟切片（每片 ~1.2MB）
                 job.State = JobState.ExtractingAudio;
                 var ffmpeg = !string.IsNullOrWhiteSpace(config.FfmpegPath) ? config.FfmpegPath.Trim() : _ffmpegManager.FfmpegConfiguration?.EncoderPath;
                 if (string.IsNullOrWhiteSpace(ffmpeg))
@@ -246,11 +245,13 @@ namespace Emby.AiSubtitles.Services
                     ffmpeg = "ffmpeg";
                 }
 
-                audioPath = await _audio.ExtractAsync(ffmpeg, req.MediaPath, Path.Combine(TempDir, req.Key), ct).ConfigureAwait(false);
+                var chunks = await _audio.ExtractChunksAsync(ffmpeg, req.MediaPath, TempDir, req.Key, ct).ConfigureAwait(false);
 
-                // 2. 语音识别
+                // 2. 分片语音识别 + 时间轴自动拼接
                 job.State = JobState.Transcribing;
-                var transcription = await _whisper.TranscribeAsync(audioPath, config, ct).ConfigureAwait(false);
+                job.Progress = 0;
+                var transcribeProgress = new Progress<double>(p => job.Progress = p);
+                var transcription = await _whisper.TranscribeChunksAsync(chunks, config, transcribeProgress, ct).ConfigureAwait(false);
                 var cues = transcription.segments
                     .Select(s => new SubtitleCue { Start = s.start, End = s.end, Text = s.text.Trim() })
                     .ToList();
@@ -302,7 +303,7 @@ namespace Emby.AiSubtitles.Services
             finally
             {
                 job.FinishedUtc = DateTime.UtcNow;
-                AudioExtractor.TryDelete(audioPath);
+                AudioExtractor.CleanupChunks(TempDir, req.Key);
                 _slots.Release();
             }
         }
@@ -421,9 +422,10 @@ namespace Emby.AiSubtitles.Services
                 case JobState.ExtractingAudio:
                     return string.Format("正在抽取音轨 ({0}s)", seconds);
                 case JobState.Transcribing:
-                    return minutes > 0
-                        ? string.Format("正在语音识别 (已用时 {0} 分钟)", minutes)
-                        : string.Format("正在语音识别 ({0}s)", seconds);
+                    var pct = (int)Math.Round(job.Progress * 100);
+                    return pct > 0
+                        ? string.Format("正在语音识别 {0}%", pct)
+                        : (minutes > 0 ? string.Format("正在语音识别 (已用时 {0} 分钟)", minutes) : string.Format("正在语音识别 ({0}s)", seconds));
                 case JobState.Translating:
                     return string.Format("正在大模型翻译 {0}% ({1} 句)", (int)Math.Round(job.Progress * 100), job.SegmentCount);
                 case JobState.Completed:
