@@ -264,10 +264,19 @@ namespace Emby.AiSubtitles.Services
                 }
 
                 // 过滤无意义呻吟、拟声词及复读幻觉（节省大模型 Token 与翻译时间）
-                var cues = SubtitleFilter.FilterCues(rawCues, config.FilterFillerSounds);
-                if (cues.Count == 0)
+                List<SubtitleCue> cues = rawCues;
+                try
                 {
-                    cues = rawCues; // 极端情况下兜底
+                    var filtered = SubtitleFilter.FilterCues(rawCues, config.FilterFillerSounds);
+                    if (filtered != null && filtered.Count > 0)
+                    {
+                        cues = filtered;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("AI 字幕: 拟声词过滤处理异常，自动使用原始分段: {0}", ex.Message);
+                    cues = rawCues;
                 }
 
                 job.SegmentCount = cues.Count;
