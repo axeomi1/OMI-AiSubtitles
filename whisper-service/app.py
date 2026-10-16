@@ -19,12 +19,19 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(float(os.getenv(name, str(default)))))
+    except (ValueError, TypeError):
+        return default
+
+
 MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "3"))  # N5105 4核推荐 3 线程
-BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))      # 1 = 贪婪解码，速度提升 2.5x
-MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "1"))
+CPU_THREADS = _env_int("WHISPER_CPU_THREADS", 3)  # N5105 4核推荐 3 线程
+BEAM_SIZE = _env_int("WHISPER_BEAM_SIZE", 1)      # 1 = 贪婪解码，速度提升 2.5x
+MAX_CONCURRENCY = _env_int("MAX_CONCURRENCY", 1)
 API_KEY = os.getenv("API_KEY", "")
 MODEL_DIR = os.getenv("MODEL_DIR", "/models")
 TMP_DIR = "/dev/shm" if os.path.isdir("/dev/shm") else None

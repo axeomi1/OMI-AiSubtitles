@@ -3,7 +3,6 @@
 services:
   emby-ai-whisper:
     image: ghcr.io/axeomi1/omi-aisubtitles-whisper:latest
-    build: ./whisper-service
     container_name: emby-ai-whisper
     shm_size: "512m"                 # 利用 16G 大内存，在内存盘暂存音频切片，零机械硬盘读写
     environment:
