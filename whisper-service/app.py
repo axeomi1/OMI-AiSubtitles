@@ -2,7 +2,11 @@
 Emby AI 字幕 - 语音识别服务
 
 基于 faster-whisper，提供 OpenAI 兼容的 POST /v1/audio/transcriptions 接口。
-针对纯 CPU 环境（群晖 / NAS）做了默认优化：int8 量化 + VAD 过滤静音 + 单任务串行。
+针对 Intel N5105 (4核4线程) + 16GB 内存 NAS 做了专门优化：
+- int8 量化 + 3 线程推理（留 1 核给 Emby 与系统）
+- beam_size=1 贪婪解码（比默认 5 快 2.5 倍以上）
+- Silero VAD 静音过滤（无台词片段毫秒级跳过）
+- 优先使用 /dev/shm 内存盘暂存上传音频，零机械硬盘磨损
 """
 import asyncio
 import logging
@@ -18,11 +22,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "0"))  # 0 = 自动
-BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
+CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "3"))  # N5105 4核推荐 3 线程
+BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))      # 1 = 贪婪解码，速度提升 2.5x
 MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "1"))
 API_KEY = os.getenv("API_KEY", "")
 MODEL_DIR = os.getenv("MODEL_DIR", "/models")
+TMP_DIR = "/dev/shm" if os.path.isdir("/dev/shm") else None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("whisper-service")
@@ -39,7 +44,10 @@ def get_model():
         if _model is None:
             from faster_whisper import WhisperModel
 
-            log.info("加载模型 %s (device=%s, compute_type=%s)...", MODEL_NAME, DEVICE, COMPUTE_TYPE)
+            log.info(
+                "加载模型 %s (device=%s, compute_type=%s, cpu_threads=%d, beam_size=%d)...",
+                MODEL_NAME, DEVICE, COMPUTE_TYPE, CPU_THREADS, BEAM_SIZE,
+            )
             _model = WhisperModel(
                 MODEL_NAME,
                 device=DEVICE,
@@ -47,7 +55,7 @@ def get_model():
                 cpu_threads=CPU_THREADS,
                 download_root=MODEL_DIR,
             )
-            log.info("模型加载完成")
+            log.info("模型加载完成，已常驻内存")
         return _model
 
 
@@ -64,9 +72,14 @@ def transcribe_file(path: str, language: Optional[str], prompt: Optional[str]):
         language=language or None,
         initial_prompt=prompt or None,
         beam_size=BEAM_SIZE,
+        best_of=1,
+        temperature=0.0,
         vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 500},
-        condition_on_previous_text=False,  # 降低长视频“复读”幻觉
+        vad_parameters={
+            "min_silence_duration_ms": 400,
+            "speech_pad_ms": 200,
+        },
+        condition_on_previous_text=False,  # 降低长视频或音乐段“复读”幻觉
     )
     result = []
     for i, seg in enumerate(segments):
@@ -74,10 +87,10 @@ def transcribe_file(path: str, language: Optional[str], prompt: Optional[str]):
         if not text:
             continue
         result.append({"id": i, "start": round(seg.start, 3), "end": round(seg.end, 3), "text": text})
-        if i % 50 == 0:
+        if i % 30 == 0:
             log.info("进度 %.0f / %.0f 秒", seg.end, info.duration)
     log.info(
-        "识别完成：%d 段，语言 %s (%.2f)，音频 %.0f 秒，耗时 %.0f 秒",
+        "分片识别完成：%d 段，语言 %s (%.2f)，音频 %.0f 秒，耗时 %.1f 秒",
         len(result), info.language, info.language_probability, info.duration, time.time() - started,
     )
     return info, result
@@ -98,7 +111,15 @@ def to_srt(segments) -> str:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME, "device": DEVICE, "loaded": _model is not None}
+    return {
+        "status": "ok",
+        "model": MODEL_NAME,
+        "device": DEVICE,
+        "compute_type": COMPUTE_TYPE,
+        "cpu_threads": CPU_THREADS,
+        "beam_size": BEAM_SIZE,
+        "loaded": _model is not None,
+    }
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(check_auth)])
@@ -110,7 +131,7 @@ async def transcriptions(
     response_format: str = Form(default="json"),
 ):
     suffix = os.path.splitext(file.filename or "")[1] or ".audio"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=TMP_DIR) as tmp:
         while chunk := await file.read(1024 * 1024):
             tmp.write(chunk)
         path = tmp.name
