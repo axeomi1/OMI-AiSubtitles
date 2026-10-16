@@ -64,8 +64,7 @@ namespace Emby.AiSubtitles.Services
                 var original = EscapeAss(Clean(cue.Text));
                 var translated = EscapeAss(Clean(cue.Translation));
 
-                // 如果大模型返回空字符串（说明大模型判断该行也是无意义拟声杂音），或者两边均为空，直接跳过不生成
-                if (string.IsNullOrWhiteSpace(translated) && (string.IsNullOrWhiteSpace(original) || SubtitleFilter.IsFillerOrMoan(original)))
+                if (string.IsNullOrWhiteSpace(translated) && string.IsNullOrWhiteSpace(original))
                 {
                     continue;
                 }

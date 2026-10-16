@@ -1,13 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AssemblyName>Emby.AiSubtitles</AssemblyName>
     <RootNamespace>Emby.AiSubtitles</RootNamespace>
-    <AssemblyVersion>0.1.0.2</AssemblyVersion>
-    <FileVersion>0.1.0.2</FileVersion>
-    <Version>0.1.0.2</Version>
+    <AssemblyVersion>0.1.0.3</AssemblyVersion>
+    <FileVersion>0.1.0.3</FileVersion>
+    <Version>0.1.0.3</Version>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>

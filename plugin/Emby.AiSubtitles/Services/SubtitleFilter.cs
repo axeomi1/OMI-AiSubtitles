@@ -50,6 +50,7 @@ namespace Emby.AiSubtitles.Services
             {
                 var result = new List<SubtitleCue>();
                 string lastText = null;
+                double lastEnd = -100;
 
                 foreach (var cue in input)
                 {
@@ -64,13 +65,17 @@ namespace Emby.AiSubtitles.Services
                         continue;
                     }
 
-                    // 防 Whisper 复读幻觉：连续出现完全相同内容的短句，只保留第一句
-                    if (string.Equals(text, lastText, StringComparison.OrdinalIgnoreCase) && text.Length <= 10)
+                    // 防 Whisper 复读幻觉：仅当紧挨着（间隔 < 3.5 秒）连续出现完全相同的短句时才去重，避免误删相隔较远的正常重复台词
+                    if (string.Equals(text, lastText, StringComparison.OrdinalIgnoreCase)
+                        && text.Length <= 10
+                        && (cue.Start - lastEnd) < 3.5)
                     {
+                        lastEnd = cue.End;
                         continue;
                     }
 
                     lastText = text;
+                    lastEnd = cue.End;
                     result.Add(cue);
                 }
 
@@ -112,6 +117,14 @@ namespace Emby.AiSubtitles.Services
             }
         }
 
+        private static readonly HashSet<string> DialogueWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "はい", "ハイ", "いいえ", "いえ", "いい", "うん", "ううん",
+            "おい", "おーい", "おう", "ええ", "え", "えっ", "えー", "へえ", "へぇ", "ああ",
+            "yes", "no", "ok", "okay", "yeah", "hey", "hi", "what", "wait",
+            "好的", "是的", "对", "好", "行", "喂", "哎"
+        };
+
         public static bool IsFillerOrMoan(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -130,18 +143,8 @@ namespace Emby.AiSubtitles.Services
                     return true;
                 }
 
-                // 对话白名单：绝对不能把正常的简短应答（如「はい」「yes」「好的」）误杀
-                if (stripped.Equals("はい", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("ハイ", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("いいえ", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("no", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("ok", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("okay", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("yeah", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("好的", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("是的", StringComparison.OrdinalIgnoreCase) ||
-                    stripped.Equals("对", StringComparison.OrdinalIgnoreCase))
+                // 对话白名单：绝对不能把正常的简短应答（如「はい」「いい」「うん」「おい」「えっ」「yes」等）误杀
+                if (DialogueWhitelist.Contains(stripped))
                 {
                     return false;
                 }

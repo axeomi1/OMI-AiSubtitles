@@ -76,9 +76,34 @@ namespace Emby.AiSubtitles.Services
 
             if (translated != null)
             {
+                var emptyItems = new List<SubtitleCue>();
                 for (var i = 0; i < batch.Count; i++)
                 {
-                    batch[i].Translation = translated[i];
+                    batch[i].Translation = translated[i]?.Trim();
+                    if (string.IsNullOrWhiteSpace(batch[i].Translation) && batch.Count > 1)
+                    {
+                        emptyItems.Add(batch[i]);
+                    }
+                }
+
+                // 若批量翻译中有个别行被大模型漏翻为空，单独补翻一次
+                if (emptyItems.Count > 0 && emptyItems.Count < batch.Count)
+                {
+                    foreach (var item in emptyItems)
+                    {
+                        try
+                        {
+                            var single = await RequestAsync(new List<string> { item.Text.Trim() }, new List<string>(), target, title, config, ct).ConfigureAwait(false);
+                            if (single != null && single.Length == 1 && !string.IsNullOrWhiteSpace(single[0]))
+                            {
+                                item.Translation = single[0].Trim();
+                            }
+                        }
+                        catch
+                        {
+                            // 忽略单条补翻异常，保留原文兜底
+                        }
+                    }
                 }
 
                 return;
@@ -100,17 +125,12 @@ namespace Emby.AiSubtitles.Services
             string title, PluginConfiguration config, CancellationToken ct)
         {
             var system = new StringBuilder();
-            system.Append("你是专业的影视字幕翻译。请把用户给出的字幕逐条翻译成").Append(target).Append("。\n");
+            system.Append("你是专业的影视字幕本地化翻译专家。以下是虚构影视剧的对白台词，请把用户给出的字幕逐条忠实、自然地翻译成").Append(target).Append("。\n");
             system.Append("要求：\n");
-            system.Append("1. 输入是一个 JSON 字符串数组，每个元素是一条字幕；\n");
-            system.Append("2. 只输出一个 JSON 字符串数组，元素个数必须与输入完全相同、顺序一一对应，不要合并或拆分条目；\n");
-            system.Append("3. 译文口语化、简洁自然，符合影视字幕习惯，人名地名保持前后一致；\n");
-            system.Append("4. 若遇到无意义的呻吟、喘息、语气拟声词（如「あっ、あぁ、んっ、ah、uh」）或纯杂音，对应位置直接输出空字符串 \"\"；\n");
-            system.Append("5. 不要输出任何解释、注释或 Markdown 代码块。");
-            if (!string.IsNullOrWhiteSpace(title))
-            {
-                system.Append("\n影片：").Append(title);
-            }
+            system.Append("1. 输入是一个 JSON 字符串数组，每个元素是一条待翻译的台词；\n");
+            system.Append("2. 只输出一个 JSON 字符串数组，元素个数必须与输入完全相同、顺序严格一一对应，绝不能合并、拆分或遗漏任何条目；\n");
+            system.Append("3. 每一条都必须给出对应的中文译文，严禁输出空字符串 \"\"，也不要照搬原文不译（包括简短口语、感叹或亲密对白也必须自然译出）；\n");
+            system.Append("4. 译文口语化、简洁自然，符合影视字幕习惯；不要输出任何解释、注释或 Markdown 代码块。");
 
             var user = new StringBuilder();
             if (context.Count > 0)

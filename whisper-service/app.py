@@ -115,14 +115,19 @@ def transcribe_file(path: str, language: Optional[str], prompt: Optional[str]):
         initial_prompt=prompt or None,
         beam_size=BEAM_SIZE,
         best_of=1,
-        temperature=0.0,
-        word_timestamps=WORD_TIMESTAMPS,   # 词级时间戳：字幕起止精确到每个词
+        temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),  # 0.0 失败时自动升温重试，防止整段 30 秒对白被丢弃造成留白
+        compression_ratio_threshold=2.8,
+        log_prob_threshold=-1.2,                     # 放宽低置信度阈值，保留轻声/含糊对白
+        no_speech_threshold=0.85,                    # 防止带背景音/喘息的对白段被误判为无语音而整段跳过
+        word_timestamps=WORD_TIMESTAMPS,             # 词级时间戳：字幕起止精确到每个词
         vad_filter=True,
         vad_parameters={
-            "min_silence_duration_ms": 300,
-            "speech_pad_ms": 100,
+            "threshold": 0.3,                        # 降低人声检测门槛（默认 0.5），轻声细语也能识别
+            "min_speech_duration_ms": 150,           # 保留简短台词（默认 250ms）
+            "min_silence_duration_ms": 1000,         # 静音满 1 秒才切分，避免把正常说话切碎吞字
+            "speech_pad_ms": 400,                    # 语音前后各留 400ms 缓冲，防止吃掉句首句尾
         },
-        condition_on_previous_text=False,  # 降低长视频或音乐段“复读”幻觉
+        condition_on_previous_text=False,            # 降低长视频或音乐段“复读”幻觉
     )
     result = []
     for seg in segments:
