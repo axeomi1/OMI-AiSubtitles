@@ -48,6 +48,7 @@ namespace Emby.AiSubtitles.Services
         public double Progress { get; set; }
         public int SegmentCount { get; set; }
         public string DetectedLanguage { get; set; }
+        public string StatusNote { get; set; }
         public string Error { get; set; }
         public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
         public DateTime? StartedUtc { get; set; }
@@ -88,7 +89,7 @@ namespace Emby.AiSubtitles.Services
             _providerManager = providerManager;
             _fileSystem = fileSystem;
             _audio = new AudioExtractor(logger);
-            _whisper = new WhisperClient(json);
+            _whisper = new WhisperClient(json, logger);
             _translator = new Translator(json, logger);
             _slots = new SemaphoreSlim(Math.Max(1, Config.MaxConcurrentJobs));
         }
@@ -251,7 +252,9 @@ namespace Emby.AiSubtitles.Services
                 job.State = JobState.Transcribing;
                 job.Progress = 0;
                 var transcribeProgress = new Progress<double>(p => job.Progress = p);
-                var transcription = await _whisper.TranscribeChunksAsync(chunks, config, transcribeProgress, ct).ConfigureAwait(false);
+                var transcription = await _whisper.TranscribeChunksAsync(
+                    chunks, config, transcribeProgress, note => job.StatusNote = note, ct).ConfigureAwait(false);
+                job.StatusNote = null;
                 var cues = transcription.segments
                     .Select(s => new SubtitleCue { Start = s.start, End = s.end, Text = s.text.Trim() })
                     .ToList();
@@ -422,6 +425,11 @@ namespace Emby.AiSubtitles.Services
                 case JobState.ExtractingAudio:
                     return string.Format("正在抽取音轨 ({0}s)", seconds);
                 case JobState.Transcribing:
+                    if (!string.IsNullOrWhiteSpace(job.StatusNote))
+                    {
+                        return job.StatusNote;
+                    }
+
                     var pct = (int)Math.Round(job.Progress * 100);
                     return pct > 0
                         ? string.Format("正在语音识别 {0}%", pct)

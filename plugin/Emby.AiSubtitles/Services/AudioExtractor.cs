@@ -43,11 +43,12 @@ namespace Emby.AiSubtitles.Services
                 ? "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 30000000 "
                 : string.Empty;
 
-            // 先抽成单个完整小体积音频，再本地高速切片（避免对网络流多次拉流）
+            // 优先使用 CBR 24k MP3（每 10 分钟分片约 1.7MB）：
+            // MP3 头部包含精确时长，可避免 Groq 对无时长头的 .ogg 预扣 3000 秒额度导致提前触发 429。
             var attempts = new List<KeyValuePair<string, string>>
             {
-                new KeyValuePair<string, string>(".ogg", "-c:a libopus -b:a 16k -application voip"),
-                new KeyValuePair<string, string>(".mp3", "-c:a libmp3lame -b:a 24k")
+                new KeyValuePair<string, string>(".mp3", "-c:a libmp3lame -b:a 24k"),
+                new KeyValuePair<string, string>(".ogg", "-c:a libopus -b:a 16k -application voip")
             };
 
             string lastError = null;
