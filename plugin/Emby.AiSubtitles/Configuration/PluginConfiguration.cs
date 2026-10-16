@@ -33,6 +33,15 @@ namespace Emby.AiSubtitles.Configuration
         /// <summary>Bilingual = 译文+原文双语；Translated = 只要译文。</summary>
         public string SubtitleMode { get; set; } = "Bilingual";
 
+        /// <summary>字幕文件格式：ass（推荐，支持精准底部对齐和独立双色字号）或 srt（带 font color 标签）。</summary>
+        public string SubtitleFormat { get; set; } = "ass";
+
+        /// <summary>主字幕（中文/译文）颜色，十六进制 RGB，默认白色 #FFFFFF。</summary>
+        public string PrimaryTextColor { get; set; } = "#FFFFFF";
+
+        /// <summary>副字幕（英文/原文）颜色，十六进制 RGB，默认黄色 #FFD700。</summary>
+        public string SecondaryTextColor { get; set; } = "#FFD700";
+
         // ---------- 任务与输出 ----------
 
         /// <summary>生成完成后把 .srt 直接写到影片所在目录并刷新条目。</summary>

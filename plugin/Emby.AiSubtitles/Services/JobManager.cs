@@ -38,6 +38,7 @@ namespace Emby.AiSubtitles.Services
         public string LanguageName { get; set; }
         public string TwoLetterLanguage { get; set; }
         public string Title { get; set; }
+        public string Format { get; set; }
     }
 
     public class SubtitleJob
@@ -45,8 +46,11 @@ namespace Emby.AiSubtitles.Services
         public JobRequest Request { get; set; }
         public JobState State { get; set; }
         public double Progress { get; set; }
+        public int SegmentCount { get; set; }
+        public string DetectedLanguage { get; set; }
         public string Error { get; set; }
         public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
+        public DateTime? StartedUtc { get; set; }
         public DateTime? FinishedUtc { get; set; }
     }
 
@@ -89,6 +93,8 @@ namespace Emby.AiSubtitles.Services
             _slots = new SemaphoreSlim(Math.Max(1, Config.MaxConcurrentJobs));
         }
 
+        public static JobManager Instance => _instance;
+
         public static JobManager GetOrCreate(ILogger logger, IJsonSerializer json, IFfmpegManager ffmpegManager,
             ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem)
         {
@@ -123,7 +129,8 @@ namespace Emby.AiSubtitles.Services
         public static string BuildKey(string mediaPath, string language)
         {
             var c = Config;
-            var raw = string.Join("|", mediaPath, language, c.EnableTranslation, c.SubtitleMode);
+            var format = SrtFormatter.NormalizeFormat(c.SubtitleFormat);
+            var raw = string.Join("|", mediaPath, language, c.EnableTranslation, c.SubtitleMode, format, c.PrimaryTextColor, c.SecondaryTextColor);
             using (var sha = SHA1.Create())
             {
                 var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(raw));
@@ -131,18 +138,65 @@ namespace Emby.AiSubtitles.Services
             }
         }
 
-        public string GetCachePath(string key) => Path.Combine(CacheDir, key + ".srt");
-
-        public bool TryGetCached(string key, out string path)
+        public string GetCachePath(string key, string format = null)
         {
-            path = GetCachePath(key);
-            return File.Exists(path);
+            var ext = SrtFormatter.NormalizeFormat(format ?? Config.SubtitleFormat);
+            return Path.Combine(CacheDir, key + "." + ext);
+        }
+
+        public bool TryGetCached(string key, out string path, out string format)
+        {
+            var preferred = SrtFormatter.NormalizeFormat(Config.SubtitleFormat);
+            var p1 = Path.Combine(CacheDir, key + "." + preferred);
+            if (File.Exists(p1))
+            {
+                path = p1;
+                format = preferred;
+                return true;
+            }
+
+            var other = preferred == "ass" ? "srt" : "ass";
+            var p2 = Path.Combine(CacheDir, key + "." + other);
+            if (File.Exists(p2))
+            {
+                path = p2;
+                format = other;
+                return true;
+            }
+
+            path = p1;
+            format = preferred;
+            return false;
         }
 
         public SubtitleJob GetJob(string key)
         {
             _jobs.TryGetValue(key, out var job);
             return job;
+        }
+
+        public IList<SubtitleJob> GetAllJobs()
+        {
+            return _jobs.Values
+                .OrderByDescending(j => j.CreatedUtc)
+                .ToList();
+        }
+
+        public int ClearFinishedJobs()
+        {
+            var count = 0;
+            foreach (var kv in _jobs.ToArray())
+            {
+                if (kv.Value.State == JobState.Completed || kv.Value.State == JobState.Failed)
+                {
+                    if (_jobs.TryRemove(kv.Key, out _))
+                    {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
         }
 
         public void RememberRequest(JobRequest request) => _pending[request.Key] = request;
@@ -157,7 +211,7 @@ namespace Emby.AiSubtitles.Services
             {
                 if (_jobs.TryGetValue(request.Key, out job)
                     && job.State != JobState.Failed
-                    && !(job.State == JobState.Completed && !File.Exists(GetCachePath(request.Key))))
+                    && !(job.State == JobState.Completed && !TryGetCached(request.Key, out _, out _)))
                 {
                     return job;
                 }
@@ -177,9 +231,12 @@ namespace Emby.AiSubtitles.Services
             await _slots.WaitAsync().ConfigureAwait(false);
             try
             {
+                job.StartedUtc = DateTime.UtcNow;
                 var config = Config;
+                var format = SrtFormatter.NormalizeFormat(req.Format ?? config.SubtitleFormat);
+                req.Format = format;
                 var ct = CancellationToken.None;
-                _logger.Info("AI 字幕: 开始生成 {0} [{1}]", req.MediaPath, req.Language);
+                _logger.Info("AI 字幕: 开始生成 {0} [{1}, {2}]", req.MediaPath, req.Language, format);
 
                 // 1. 抽取音频
                 job.State = JobState.ExtractingAudio;
@@ -202,6 +259,8 @@ namespace Emby.AiSubtitles.Services
                     throw new InvalidOperationException("没有识别到任何语音内容。");
                 }
 
+                job.SegmentCount = cues.Count;
+                job.DetectedLanguage = transcription.language;
                 _logger.Info("AI 字幕: 识别完成，{0} 条，检测语言 {1}", cues.Count, transcription.language);
 
                 // 3. 翻译（原语言与目标语言相同则跳过）
@@ -221,13 +280,13 @@ namespace Emby.AiSubtitles.Services
 
                 // 4. 输出
                 var bilingual = needTranslate && string.Equals(config.SubtitleMode, "Bilingual", StringComparison.OrdinalIgnoreCase);
-                var srt = SrtFormatter.Build(cues, bilingual);
-                var cachePath = GetCachePath(req.Key);
-                File.WriteAllText(cachePath, srt, new UTF8Encoding(false));
+                var content = SrtFormatter.Build(cues, config, bilingual);
+                var cachePath = GetCachePath(req.Key, format);
+                File.WriteAllText(cachePath, content, new UTF8Encoding(false));
 
                 if (config.SaveNextToMedia)
                 {
-                    SaveNextToMedia(req, srt);
+                    SaveNextToMedia(req, content, format);
                 }
 
                 job.State = JobState.Completed;
@@ -270,10 +329,10 @@ namespace Emby.AiSubtitles.Services
         }
 
         /// <summary>
-        /// 把字幕写到影片旁边：优先覆盖之前由 Emby 保存的占位字幕，否则新建 {文件名}.{语言}.srt。
+        /// 把字幕写到影片旁边：优先覆盖之前由 Emby 保存的占位字幕，否则新建 {文件名}.{语言}.{ass|srt}。
         /// 然后让 Emby 刷新该条目以识别新字幕。
         /// </summary>
-        private void SaveNextToMedia(JobRequest req, string srt)
+        private void SaveNextToMedia(JobRequest req, string content, string format)
         {
             try
             {
@@ -281,29 +340,39 @@ namespace Emby.AiSubtitles.Services
                 var baseName = Path.GetFileNameWithoutExtension(req.MediaPath);
                 var targets = new List<string>();
 
-                foreach (var file in Directory.EnumerateFiles(dir, baseName + "*.srt"))
+                foreach (var ext in new[] { "ass", "srt" })
                 {
-                    try
+                    foreach (var file in Directory.EnumerateFiles(dir, baseName + "*." + ext))
                     {
-                        if (new FileInfo(file).Length < 4096 && File.ReadAllText(file).Contains(PlaceholderMarker))
+                        try
                         {
-                            targets.Add(file);
+                            if (new FileInfo(file).Length < 8192 && File.ReadAllText(file).Contains(PlaceholderMarker))
+                            {
+                                if (string.Equals(ext, format, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    targets.Add(file);
+                                }
+                                else
+                                {
+                                    File.Delete(file);
+                                }
+                            }
                         }
-                    }
-                    catch
-                    {
-                        // ignore unreadable file
+                        catch
+                        {
+                            // ignore unreadable file
+                        }
                     }
                 }
 
                 if (targets.Count == 0)
                 {
-                    targets.Add(Path.Combine(dir, baseName + "." + req.Language + ".srt"));
+                    targets.Add(Path.Combine(dir, baseName + "." + req.Language + "." + format));
                 }
 
                 foreach (var target in targets)
                 {
-                    File.WriteAllText(target, srt, new UTF8Encoding(false));
+                    File.WriteAllText(target, content, new UTF8Encoding(false));
                     _logger.Info("AI 字幕: 已写入 {0}", target);
                 }
 
@@ -337,6 +406,30 @@ namespace Emby.AiSubtitles.Services
             catch (Exception ex)
             {
                 _logger.Warn("AI 字幕: 刷新条目失败: {0}", ex.Message);
+            }
+        }
+
+        public static string DescribeState(SubtitleJob job)
+        {
+            var elapsedBase = job.StartedUtc ?? job.CreatedUtc;
+            var minutes = Math.Max(0, (int)(DateTime.UtcNow - elapsedBase).TotalMinutes);
+            var seconds = Math.Max(0, (int)(DateTime.UtcNow - elapsedBase).TotalSeconds);
+            switch (job.State)
+            {
+                case JobState.Queued:
+                    return "排队等待中";
+                case JobState.ExtractingAudio:
+                    return string.Format("正在抽取音轨 ({0}s)", seconds);
+                case JobState.Transcribing:
+                    return minutes > 0
+                        ? string.Format("正在语音识别 (已用时 {0} 分钟)", minutes)
+                        : string.Format("正在语音识别 ({0}s)", seconds);
+                case JobState.Translating:
+                    return string.Format("正在大模型翻译 {0}% ({1} 句)", (int)Math.Round(job.Progress * 100), job.SegmentCount);
+                case JobState.Completed:
+                    return string.Format("已完成 ({0} 句)", job.SegmentCount);
+                default:
+                    return "生成失败";
             }
         }
     }

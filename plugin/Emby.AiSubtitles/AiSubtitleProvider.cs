@@ -56,6 +56,7 @@ namespace Emby.AiSubtitles
             }
 
             var language = string.IsNullOrWhiteSpace(request.Language) ? "chi" : request.Language.ToLowerInvariant();
+            var format = SrtFormatter.NormalizeFormat(config.SubtitleFormat);
             var key = JobManager.BuildKey(request.MediaPath, language);
 
             _jobs.RememberRequest(new JobRequest
@@ -65,7 +66,8 @@ namespace Emby.AiSubtitles
                 Language = language,
                 TwoLetterLanguage = request.LanguageInfo?.TwoLetterISOLanguageName ?? language,
                 LanguageName = GetLanguageName(language, request),
-                Title = BuildTitle(request)
+                Title = BuildTitle(request),
+                Format = format
             });
 
             var info = new RemoteSubtitleInfo
@@ -73,23 +75,24 @@ namespace Emby.AiSubtitles
                 Id = IdPrefix + key,
                 ProviderName = Name,
                 Language = language,
-                Format = "srt",
+                Format = format,
                 Author = "AI",
                 IsHashMatch = false,
                 IsForced = false
             };
 
             var job = _jobs.GetJob(key);
-            if (_jobs.TryGetCached(key, out var cachePath))
+            if (_jobs.TryGetCached(key, out var cachePath, out var cachedFormat))
             {
-                info.Name = "AI 字幕 · 已完成";
+                info.Format = cachedFormat;
+                info.Name = "AI 字幕 · 已完成 (" + cachedFormat.ToUpperInvariant() + ")";
                 info.Comment = "已生成完毕，点击下载";
                 info.DateCreated = File.GetLastWriteTimeUtc(cachePath);
             }
             else if (job != null && job.State != JobState.Failed && job.State != JobState.Completed)
             {
-                info.Name = "AI 字幕 · " + DescribeState(job);
-                info.Comment = "正在后台生成，完成后会自动写入影片目录";
+                info.Name = "AI 字幕 · " + JobManager.DescribeState(job);
+                info.Comment = "正在后台生成，可在插件设置页实时查看所有任务进度";
             }
             else if (job != null && job.State == JobState.Failed)
             {
@@ -98,10 +101,10 @@ namespace Emby.AiSubtitles
             }
             else
             {
-                info.Name = "AI 字幕 · 点击开始生成";
+                info.Name = "AI 字幕 · 点击开始生成 (" + format.ToUpperInvariant() + ")";
                 info.Comment = config.EnableTranslation
-                    ? "语音识别 + 大模型翻译，CPU 上一部电影可能需要数十分钟"
-                    : "语音识别生成原语言字幕，CPU 上一部电影可能需要数十分钟";
+                    ? "语音识别 + 大模型翻译（底部双色双语），可在插件设置页查看进度"
+                    : "语音识别生成原语言字幕，可在插件设置页查看进度";
             }
 
             return Task.FromResult<IEnumerable<RemoteSubtitleInfo>>(new[] { info });
@@ -117,11 +120,12 @@ namespace Emby.AiSubtitles
             var key = id.Substring(IdPrefix.Length);
             _jobs.TryGetRequest(key, out var request);
             var language = request?.Language ?? "chi";
+            var format = SrtFormatter.NormalizeFormat(request?.Format ?? Plugin.Instance.Configuration.SubtitleFormat);
 
             // 已完成：直接返回缓存的字幕
-            if (_jobs.TryGetCached(key, out var cachePath))
+            if (_jobs.TryGetCached(key, out var cachePath, out var cachedFormat))
             {
-                return Task.FromResult(Response(language, File.ReadAllText(cachePath)));
+                return Task.FromResult(Response(language, cachedFormat, File.ReadAllText(cachePath)));
             }
 
             var job = _jobs.GetJob(key);
@@ -138,39 +142,19 @@ namespace Emby.AiSubtitles
 
             // 未完成：先返回一条占位字幕，Emby 会把它保存到影片旁边；
             // 任务完成后插件会用正式字幕覆盖这个文件并刷新条目。
-            var message = JobManager.PlaceholderMarker + "（" + DescribeState(job) + "），完成后会自动替换为正式字幕";
-            return Task.FromResult(Response(language, SrtFormatter.Placeholder(message)));
+            var message = JobManager.PlaceholderMarker + "（" + JobManager.DescribeState(job) + "），完成后会自动替换为正式字幕";
+            return Task.FromResult(Response(language, format, SrtFormatter.Placeholder(message, format)));
         }
 
-        private static SubtitleResponse Response(string language, string srt)
+        private static SubtitleResponse Response(string language, string format, string content)
         {
             return new SubtitleResponse
             {
-                Format = "srt",
+                Format = format,
                 Language = language,
                 IsForced = false,
-                Stream = new MemoryStream(new UTF8Encoding(false).GetBytes(srt))
+                Stream = new MemoryStream(new UTF8Encoding(false).GetBytes(content))
             };
-        }
-
-        private static string DescribeState(SubtitleJob job)
-        {
-            switch (job.State)
-            {
-                case JobState.Queued:
-                    return "排队中";
-                case JobState.ExtractingAudio:
-                    return "正在抽取音频";
-                case JobState.Transcribing:
-                    var minutes = (int)(DateTime.UtcNow - job.CreatedUtc).TotalMinutes;
-                    return "正在语音识别，已用时 " + minutes + " 分钟";
-                case JobState.Translating:
-                    return "正在翻译 " + (int)(job.Progress * 100) + "%";
-                case JobState.Completed:
-                    return "已完成";
-                default:
-                    return "失败";
-            }
         }
 
         private static string GetLanguageName(string language, SubtitleSearchRequest request)
