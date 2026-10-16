@@ -42,6 +42,9 @@ namespace Emby.AiSubtitles.Configuration
         /// <summary>副字幕（英文/原文）颜色，十六进制 RGB，默认黄色 #FFD700。</summary>
         public string SecondaryTextColor { get; set; } = "#FFD700";
 
+        /// <summary>是否自动过滤无意义的呻吟、喘息、拟声词（如「あっ、あぁ、んっ、ah、uh」）及 Whisper 复读幻觉，大幅节省大模型 Token 并净化画面。</summary>
+        public bool FilterFillerSounds { get; set; } = true;
+
         // ---------- 任务与输出 ----------
 
         /// <summary>生成完成后把 .srt 直接写到影片所在目录并刷新条目。</summary>

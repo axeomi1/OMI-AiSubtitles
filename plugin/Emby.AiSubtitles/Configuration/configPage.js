@@ -7,7 +7,7 @@ define(['baseView', 'loading', 'emby-input', 'emby-button', 'emby-checkbox', 'em
         'LlmApiUrl', 'LlmApiKey', 'LlmModel', 'SubtitleMode', 'SubtitleFormat',
         'PrimaryTextColor', 'SecondaryTextColor', 'FfmpegPath'];
     var numberFields = ['TranslationBatchSize', 'MaxConcurrentJobs', 'RequestTimeoutMinutes'];
-    var boolFields = ['EnableTranslation', 'SaveNextToMedia', 'AllowAutomaticDownload'];
+    var boolFields = ['EnableTranslation', 'SaveNextToMedia', 'AllowAutomaticDownload', 'FilterFillerSounds'];
 
     function escapeHtml(str) {
         return String(str || '')

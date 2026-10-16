@@ -255,17 +255,25 @@ namespace Emby.AiSubtitles.Services
                 var transcription = await _whisper.TranscribeChunksAsync(
                     chunks, config, transcribeProgress, note => job.StatusNote = note, ct).ConfigureAwait(false);
                 job.StatusNote = null;
-                var cues = transcription.segments
+                var rawCues = transcription.segments
                     .Select(s => new SubtitleCue { Start = s.start, End = s.end, Text = s.text.Trim() })
                     .ToList();
-                if (cues.Count == 0)
+                if (rawCues.Count == 0)
                 {
                     throw new InvalidOperationException("没有识别到任何语音内容。");
                 }
 
+                // 过滤无意义呻吟、拟声词及复读幻觉（节省大模型 Token 与翻译时间）
+                var cues = SubtitleFilter.FilterCues(rawCues, config.FilterFillerSounds);
+                if (cues.Count == 0)
+                {
+                    cues = rawCues; // 极端情况下兜底
+                }
+
                 job.SegmentCount = cues.Count;
                 job.DetectedLanguage = transcription.language;
-                _logger.Info("AI 字幕: 识别完成，{0} 条，检测语言 {1}", cues.Count, transcription.language);
+                _logger.Info("AI 字幕: 识别完成，原始 {0} 条，过滤后保留 {1} 条核心台词，检测语言 {2}",
+                    rawCues.Count, cues.Count, transcription.language);
 
                 // 3. 翻译（原语言与目标语言相同则跳过）
                 var needTranslate = config.EnableTranslation && !SameLanguage(transcription.language, req);

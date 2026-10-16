@@ -105,7 +105,8 @@ namespace Emby.AiSubtitles.Services
             system.Append("1. 输入是一个 JSON 字符串数组，每个元素是一条字幕；\n");
             system.Append("2. 只输出一个 JSON 字符串数组，元素个数必须与输入完全相同、顺序一一对应，不要合并或拆分条目；\n");
             system.Append("3. 译文口语化、简洁自然，符合影视字幕习惯，人名地名保持前后一致；\n");
-            system.Append("4. 不要输出任何解释、注释或 Markdown 代码块。");
+            system.Append("4. 若遇到无意义的呻吟、喘息、语气拟声词（如「あっ、あぁ、んっ、ah、uh」）或纯杂音，对应位置直接输出空字符串 \"\"；\n");
+            system.Append("5. 不要输出任何解释、注释或 Markdown 代码块。");
             if (!string.IsNullOrWhiteSpace(title))
             {
                 system.Append("\n影片：").Append(title);

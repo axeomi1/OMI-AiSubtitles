@@ -10,7 +10,7 @@
         <div data-role="content">
             <div class="content-primary">
                 <form class="aiSubtitlesConfigForm">
-                    <h2 class="sectionTitle">AI 字幕 <span style="font-size: 0.65em; opacity: 0.7; font-weight: normal;">v0.5.2</span></h2>
+                    <h2 class="sectionTitle">AI 字幕 <span style="font-size: 0.65em; opacity: 0.7; font-weight: normal;">v0.6.0</span></h2>
                     <p class="fieldDescription">
                         设置完成后，在影片的「编辑字幕 → 搜索」中选择「AI 字幕 · 点击开始生成」即可。
                         生成在后台进行，完成后会自动写入影片目录；也可以在下方任务列表中实时观察所有字幕任务的生成进度。
@@ -70,6 +70,13 @@
                     </div>
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="TranslationBatchSize" min="1" max="100" label="每批翻译行数" />
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="FilterFillerSounds" />
+                            <span>过滤无意义呻吟与语气拟声词（大幅减少 Token 消耗并净化画面）</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">针对日漫、番剧或剧情片中的「あっ、あぁ、んっ、うーん、哈啊、喘息」等无剧情价值拟声词及 Whisper 重复幻觉进行预清理与翻译过滤。</div>
                     </div>
                     <div class="selectContainer">
                         <select is="emby-select" id="SubtitleMode" label="字幕内容">
