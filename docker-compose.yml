@@ -1,0 +1,37 @@
+# Emby + AI 字幕识别服务示例
+# 如果你已经有在跑的 Emby 容器，只需要把 emby-ai-whisper 服务加进去，
+# 并确保它和 Emby 在同一个 Docker 网络里。
+services:
+  emby:
+    image: emby/embyserver:latest
+    container_name: emby
+    environment:
+      - UID=1000
+      - GID=1000
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./emby-config:/config          # 插件 DLL 放到 ./emby-config/plugins/
+      - /volume1/media:/media           # 媒体目录需要可写，AI 字幕才能写回影片旁边
+    ports:
+      - "8096:8096"
+    restart: unless-stopped
+
+  emby-ai-whisper:
+    build: ./whisper-service
+    # 或者使用你自己推送的镜像：image: yourname/emby-ai-whisper:latest
+    container_name: emby-ai-whisper
+    environment:
+      # 纯 CPU 推荐 small（速度/准确率平衡）；CPU 很弱可用 base；追求准确率可试 medium
+      - WHISPER_MODEL=small
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE_TYPE=int8
+      - WHISPER_CPU_THREADS=0      # 0 = 自动；想给 NAS 留余量可设为核心数的一半
+      - WHISPER_BEAM_SIZE=5        # CPU 吃力时可改为 1，速度明显提升
+      - MAX_CONCURRENCY=1
+      # - API_KEY=change-me        # 设置后，插件里也要填写相同的 Key
+      # - HF_ENDPOINT=https://hf-mirror.com   # 国内下载模型慢可以打开
+    volumes:
+      - ./whisper-models:/models   # 模型缓存，避免每次重建都重新下载
+    # ports:
+    #   - "8000:8000"              # 仅调试时需要暴露
+    restart: unless-stopped

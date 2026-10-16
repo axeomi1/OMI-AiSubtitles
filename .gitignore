@@ -1,0 +1,8 @@
+bin/
+obj/
+dist/
+emby-config/
+whisper-models/
+*.user
+.vs/
+__pycache__/

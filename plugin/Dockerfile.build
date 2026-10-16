@@ -1,0 +1,10 @@
+# 无需在本机安装 .NET SDK，用 Docker 编译插件：
+#   docker build -f plugin/Dockerfile.build --output type=local,dest=./dist plugin
+# 生成的 dist/Emby.AiSubtitles.dll 复制到 Emby 的 /config/plugins/ 目录后重启 Emby。
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY Emby.AiSubtitles/ ./Emby.AiSubtitles/
+RUN dotnet build Emby.AiSubtitles/Emby.AiSubtitles.csproj -c Release -o /out
+
+FROM scratch
+COPY --from=build /out/Emby.AiSubtitles.dll /
