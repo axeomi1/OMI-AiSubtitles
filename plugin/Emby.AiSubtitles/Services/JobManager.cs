@@ -296,7 +296,7 @@ namespace Emby.AiSubtitles.Services
             catch (Exception ex)
             {
                 job.State = JobState.Failed;
-                job.Error = ex.Message;
+                job.Error = WhisperClient.FlattenException(ex);
                 _logger.ErrorException("AI 字幕: 生成失败 {0}", ex, req.MediaPath);
             }
             finally

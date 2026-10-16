@@ -32,11 +32,11 @@ namespace Emby.AiSubtitles.Services
                 ? "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 30000000 "
                 : string.Empty;
 
-            // 优先 Opus（2 小时约 15MB，也能满足 OpenAI 云端 25MB 的限制），失败则回退 MP3。
+            // 优先 Opus 16k（语音识别足够清晰，2 小时仅约 11MB，3 小时约 17MB，轻松通过云端/网关 25MB 限制），失败则回退 MP3 24k。
             var attempts = new List<KeyValuePair<string, string>>
             {
-                new KeyValuePair<string, string>(".ogg", "-c:a libopus -b:a 24k"),
-                new KeyValuePair<string, string>(".mp3", "-c:a libmp3lame -b:a 32k")
+                new KeyValuePair<string, string>(".ogg", "-c:a libopus -b:a 16k -application voip"),
+                new KeyValuePair<string, string>(".mp3", "-c:a libmp3lame -b:a 24k")
             };
 
             string lastError = null;

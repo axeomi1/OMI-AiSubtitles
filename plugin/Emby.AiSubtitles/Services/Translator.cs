@@ -133,6 +133,7 @@ namespace Emby.AiSubtitles.Services
             var url = config.LlmApiUrl.TrimEnd('/') + "/chat/completions";
             using (var request = new HttpRequestMessage(HttpMethod.Post, url))
             {
+                request.Headers.ExpectContinue = false;
                 request.Content = new StringContent(_json.SerializeToString(payload), Encoding.UTF8, "application/json");
                 if (!string.IsNullOrWhiteSpace(config.LlmApiKey))
                 {
