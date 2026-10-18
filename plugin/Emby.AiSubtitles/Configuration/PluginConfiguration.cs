@@ -45,6 +45,9 @@ namespace Emby.AiSubtitles.Configuration
         /// <summary>是否自动过滤无意义的呻吟、喘息、拟声词（如「あっ、あぁ、んっ、ah、uh」）及 Whisper 复读幻觉，大幅节省大模型 Token 并净化画面。</summary>
         public bool FilterFillerSounds { get; set; } = true;
 
+        /// <summary>搜索字幕时是否优先从迅雷字幕库和 SubtitleCat 番号库搜索现成字幕（1秒直下并自动转为底部对齐样式）。</summary>
+        public bool EnableOnlineSubtitleSearch { get; set; } = true;
+
         // ---------- 任务与输出 ----------
 
         /// <summary>生成完成后把 .srt 直接写到影片所在目录并刷新条目。</summary>

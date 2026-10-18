@@ -10,10 +10,9 @@
         <div data-role="content">
             <div class="content-primary">
                 <form class="aiSubtitlesConfigForm">
-                    <h2 class="sectionTitle">AI 字幕 <span style="font-size: 0.65em; opacity: 0.7; font-weight: normal;">v0.1.0.3</span></h2>
+                    <h2 class="sectionTitle">AI 字幕 <span style="font-size: 0.65em; opacity: 0.7; font-weight: normal;">v0.1.0.4</span></h2>
                     <p class="fieldDescription">
-                        设置完成后，在影片的「编辑字幕 → 搜索」中选择「AI 字幕 · 点击开始生成」即可。
-                        生成在后台进行，完成后会自动写入影片目录；也可以在下方任务列表中实时观察所有字幕任务的生成进度。
+                        设置完成后，在影片的「编辑字幕 → 搜索」中即可一键秒下全网现成番号字幕（迅雷 + SubtitleCat），或选择「AI 字幕 · 点击开始生成」进行 AI 识别翻译。
                     </p>
 
                     <div style="margin: 1.5em 0 2em 0; padding: 1.2em; border-radius: 8px; background: rgba(128,128,128,0.12); border: 1px solid rgba(128,128,128,0.25);">
@@ -31,6 +30,15 @@
                         <div id="jobsContainer" style="font-size: 0.92em;">
                             <div class="fieldDescription">正在加载任务状态…</div>
                         </div>
+                    </div>
+
+                    <h3 class="sectionTitle">全网现成字幕秒下（迅雷 + SubtitleCat 番号库）</h3>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="EnableOnlineSubtitleSearch" />
+                            <span>优先搜索全网现成中文字幕（1秒直下，自动清除顶部水印并转换为底部对齐 ASS 样式）</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">开启后，在 Emby 搜索字幕时会自动从文件名提取番号（如 NIMA-007）或片名，优先列出迅雷字幕库与 SubtitleCat 现成字幕；若全网无现成字幕，再点击下方的 AI 字幕兜底生成。</div>
                     </div>
 
                     <h3 class="sectionTitle">语音识别（Whisper）</h3>

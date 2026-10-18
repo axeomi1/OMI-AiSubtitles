@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Emby.AiSubtitles.Configuration;
 using Emby.AiSubtitles.Models;
 
@@ -157,6 +158,113 @@ namespace Emby.AiSubtitles.Services
             }
 
             return "1\n00:00:01,000 --> 00:00:15,000\n" + message + "\n\n";
+        }
+
+        private static readonly Regex SrtTimeRegex = new Regex(
+            @"^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})",
+            RegexOptions.Compiled);
+
+        private static readonly Regex InlineTagStripRegex = new Regex(
+            @"\{[^}]*\}|<[^>]*>",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// 解析标准 SRT 字幕文本为 SubtitleCue 列表，自动清除旧定位标签、水印和无意义语气词，便于统一转换为底部对齐 ASS 字幕。
+        /// </summary>
+        public static List<SubtitleCue> ParseSrt(string srtContent, bool filterFillerSounds = true)
+        {
+            var result = new List<SubtitleCue>();
+            if (string.IsNullOrWhiteSpace(srtContent))
+            {
+                return result;
+            }
+
+            var lines = srtContent.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            int i = 0;
+            while (i < lines.Length)
+            {
+                var line = lines[i].Trim();
+                var m = SrtTimeRegex.Match(line);
+                if (!m.Success)
+                {
+                    i++;
+                    continue;
+                }
+
+                double start = ParseTimeParts(m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value, m.Groups[4].Value);
+                double end = ParseTimeParts(m.Groups[5].Value, m.Groups[6].Value, m.Groups[7].Value, m.Groups[8].Value);
+                i++;
+
+                var textLines = new List<string>();
+                while (i < lines.Length && !string.IsNullOrWhiteSpace(lines[i]))
+                {
+                    // 如果下一行已经是新的时间戳，跳出
+                    if (SrtTimeRegex.IsMatch(lines[i].Trim()))
+                    {
+                        break;
+                    }
+
+                    // 看看是不是下一段的序号（紧接着下一行是时间戳）
+                    if (i + 1 < lines.Length && int.TryParse(lines[i].Trim(), out _) && SrtTimeRegex.IsMatch(lines[i + 1].Trim()))
+                    {
+                        break;
+                    }
+
+                    var cleaned = InlineTagStripRegex.Replace(lines[i], string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(cleaned) && !IsWatermarkCreditLine(cleaned, start))
+                    {
+                        textLines.Add(cleaned);
+                    }
+                    i++;
+                }
+
+                if (textLines.Count == 0)
+                {
+                    continue;
+                }
+
+                string primaryLine = textLines[0];
+                string secondaryLine = textLines.Count > 1 ? string.Join(" ", textLines.GetRange(1, textLines.Count - 1)) : string.Empty;
+
+                if (filterFillerSounds && SubtitleFilter.IsFillerOrMoan(primaryLine) &&
+                    (string.IsNullOrEmpty(secondaryLine) || SubtitleFilter.IsFillerOrMoan(secondaryLine)))
+                {
+                    continue;
+                }
+
+                result.Add(new SubtitleCue
+                {
+                    Start = start,
+                    End = Math.Max(end, start + 0.5),
+                    Translation = primaryLine,
+                    Text = secondaryLine
+                });
+            }
+
+            return result;
+        }
+
+        private static bool IsWatermarkCreditLine(string text, double startSeconds)
+        {
+            if (startSeconds > 30)
+            {
+                return false;
+            }
+
+            return text.IndexOf("字幕制作", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("Mimomoomime", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("Jamakav", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("subtitlecat", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static double ParseTimeParts(string h, string m, string s, string ms)
+        {
+            int hours = int.TryParse(h, out var hh) ? hh : 0;
+            int mins = int.TryParse(m, out var mm) ? mm : 0;
+            int secs = int.TryParse(s, out var ss) ? ss : 0;
+            ms = ms.PadRight(3, '0').Substring(0, 3);
+            int millis = int.TryParse(ms, out var mss) ? mss : 0;
+            return hours * 3600.0 + mins * 60.0 + secs + millis / 1000.0;
         }
 
         private static string NormalizeHexColor(string hex, string fallback)
